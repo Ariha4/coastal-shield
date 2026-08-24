@@ -4,8 +4,6 @@ services:
     ports:
       - "8501:8501"   # Streamlit UI  -> http://localhost:8501
       - "8000:8000"   # /metrics      -> http://localhost:8000/metrics
-    env_file:
-      - .env
 
   prometheus:
     image: prom/prometheus:latest
