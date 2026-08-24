@@ -23,6 +23,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.data_loader import HABMAP_STATION_COORDS, PROJECT_ROOT, find_habmap_corroboration, load_habmap
+from src.metrics import MEMO_GENERATION_SECONDS, MEMOS_GENERATED, PDF_EXPORT_FAILURES, ensure_metrics_server
 from src.report_generator import ReportInput, export_report_pdf, generate_closure_report
 from src.zone_conditions import get_calcofi_conditions
 
@@ -858,11 +859,17 @@ def render_report_panel(row: pd.Series, conditions: dict) -> None:
                 ocean_conditions=conditions,
                 no_model_prediction=bool(no_pred),
             )
-            txt, source = generate_closure_report(inp)
-            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-            safe_zone = row["display_name"].replace("/", "-").replace(" ", "_")
-            pdf_path = REPORTS_DIR / f"{safe_zone}_{inp.date}.pdf"
-            export_report_pdf(txt, pdf_path)
+            with MEMO_GENERATION_SECONDS.time():
+                txt, source = generate_closure_report(inp)
+                REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+                safe_zone = row["display_name"].replace("/", "-").replace(" ", "_")
+                pdf_path = REPORTS_DIR / f"{safe_zone}_{inp.date}.pdf"
+                try:
+                    export_report_pdf(txt, pdf_path)
+                except Exception:
+                    PDF_EXPORT_FAILURES.inc()
+                    raise
+            MEMOS_GENERATED.labels(zone=row["display_name"], source=source).inc()
             st.session_state.report_text = txt
             st.session_state.report_pdf = pdf_path
             st.session_state.report_source = source
@@ -889,6 +896,7 @@ def render_footer() -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
+    ensure_metrics_server(port=8000)
     st.set_page_config(
         page_title="Coastal Shield — HAB Early Warning",
         page_icon="🌊", layout="wide", initial_sidebar_state="expanded",

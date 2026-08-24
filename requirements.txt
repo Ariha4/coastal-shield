@@ -17,3 +17,4 @@ torch>=2.1
 ipykernel>=6.0
 matplotlib>=3.8
 pyarrow>=14.0
+prometheus-client>=0.19
