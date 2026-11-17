@@ -1,5 +1,12 @@
 # Weights & Biases local cache (see src/wandb_log.py)
 .wandb/
+wandb/
+
+# Local debug logs (also covered by *.log below)
+tea_debug.log
+
+# macOS Finder metadata
+.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
