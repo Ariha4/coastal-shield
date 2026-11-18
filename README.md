@@ -142,6 +142,16 @@ coastal_shield/
 
 ---
 
+## My Contributions
+
+Coastal Shield is a team project, forked from [aarshiagupta/coastal-shield](https://github.com/aarshiagupta/coastal-shield). My (Ariha Shah's) part of the work:
+
+- **Modeling layer**: built the XGBoost risk model and the SHAP explainability that attributes each prediction to ocean variables.
+- **Dashboard layer**: built the dashboard that presents zone-level risk to health officials.
+- **Observability**: added the Prometheus + Grafana monitoring stack, run together with the app via Docker Compose.
+
+---
+
 ## Stack
 
 Python · XGBoost · SHAP · Conformal Prediction · Streamlit · Plotly · Gemini API · Weights & Biases · fpdf2 · HuggingFace (Chronos) · CalCOFI · HABMAP · iNaturalist
