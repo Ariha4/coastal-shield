@@ -54,3 +54,39 @@ def test_bloom_label_ignores_observation_outside_radius_and_window():
         }
     )
     assert DataLoader()._bloom_labels(grid, obs).tolist() == [0]
+
+
+def test_lags_use_previous_calendar_weeks():
+    df = make_grid_weeks(n_weeks=4, grids=((33.0, -118.0),))
+    df["nitrate"] = [1.0, 2.0, 3.0, 4.0]
+    df["chlorophyll"] = [10.0, 20.0, 30.0, 40.0]
+    out = DataLoader()._engineer_features(df)
+    assert out["nitrate_lag7"].tolist()[1:] == [1.0, 2.0, 3.0]
+    assert out["nitrate_lag14"].tolist()[2:] == [1.0, 2.0]
+    assert out["chlorophyll_lag7"].tolist()[1:] == [10.0, 20.0, 30.0]
+    assert np.isnan(out["nitrate_lag7"].iloc[0])
+
+
+def test_lags_are_nan_across_gaps_in_sparse_cruise_data():
+    # Quarterly visits: the row before 2020-04-06 is 13 weeks earlier, not 1 or 2.
+    df = pd.DataFrame(
+        {
+            "grid_lat": 33.0,
+            "grid_lon": -118.0,
+            "week_start": pd.to_datetime(["2020-01-06", "2020-04-06", "2020-04-13"]),
+            "nitrate": [5.0, 6.0, 7.0],
+            "chlorophyll": [1.0, 2.0, 3.0],
+        }
+    )
+    out = DataLoader()._engineer_features(df)
+    assert np.isnan(out["nitrate_lag7"].iloc[1])
+    assert np.isnan(out["nitrate_lag14"].iloc[1])
+    assert out["nitrate_lag7"].iloc[2] == 6.0
+    assert np.isnan(out["nitrate_lag14"].iloc[2])
+
+
+def test_lags_never_cross_grid_cells():
+    df = make_grid_weeks(n_weeks=2, grids=((33.0, -118.0), (34.0, -120.0)))
+    out = DataLoader()._engineer_features(df)
+    first_weeks = out[out["week_start"] == out["week_start"].min()]
+    assert first_weeks["nitrate_lag7"].isna().all()
