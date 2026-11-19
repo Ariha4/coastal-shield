@@ -1,0 +1,15 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+# Pyflakes + the syntax/statement pycodestyle checks. E402 is ignored because
+# the src/ scripts insert the repo root into sys.path before importing src.*.
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E402"]
