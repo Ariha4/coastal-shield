@@ -62,8 +62,13 @@ def grid_half_degree(lat: pd.Series, lon: pd.Series) -> tuple[pd.Series, pd.Seri
 
 
 def grid_center_lat_lon(grid_lat: float, grid_lon: float) -> tuple[float, float]:
-    """Center of the 0.5° cell for distance checks."""
-    return grid_lat + 0.25, grid_lon + 0.25
+    """Center of the 0.5° cell for distance checks.
+
+    :func:`grid_half_degree` rounds to the *nearest* 0.5°, so the grid value is already the
+    cell center (cell 33.0 spans [32.75, 33.25)). Adding a quarter degree here would shift
+    every distance check ~28 km north and ~23 km east of the cell.
+    """
+    return float(grid_lat), float(grid_lon)
 
 
 class DataLoader:
@@ -611,8 +616,7 @@ def find_habmap_corroboration(
     if len(blooms) == 0:
         return blooms
 
-    clat = zone_lat + 0.25
-    clon = zone_lon + 0.25
+    clat, clon = grid_center_lat_lon(zone_lat, zone_lon)
     dist = haversine_km(blooms["lat"].to_numpy(), blooms["lon"].to_numpy(), clat, clon)
     mask = dist <= radius_km
     blooms = blooms[mask].copy()

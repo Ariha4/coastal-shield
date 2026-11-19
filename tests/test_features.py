@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data_loader import DataLoader, grid_half_degree, haversine_km
+from src.data_loader import DataLoader, grid_center_lat_lon, grid_half_degree, haversine_km
 from tests.conftest import make_grid_weeks
 
 
@@ -28,3 +28,29 @@ def test_anomalies_are_computed_within_each_grid_cell():
     out = DataLoader()._engineer_features(df)
     # Constant temperature inside each cell -> zero anomaly; a cross-grid leak would make it non-zero.
     assert np.allclose(out["sst_anomaly"], 0.0)
+
+
+def test_grid_center_is_the_snapped_point_itself():
+    # grid_half_degree rounds to the nearest 0.5, so a grid value already sits at the
+    # middle of its cell; e.g. cell 33.0 spans [32.75, 33.25).
+    assert grid_center_lat_lon(33.0, -118.0) == (33.0, -118.0)
+
+
+def test_bloom_label_counts_observation_inside_its_own_cell():
+    # Observation 30 km south of the grid point: inside the cell and inside the 50 km
+    # radius. Measuring from (lat+0.25, lon+0.25) puts it ~67 km away and misses it.
+    grid = pd.DataFrame({"grid_lat": [33.0], "grid_lon": [-118.0], "week_start": [pd.Timestamp("2020-01-06")]})
+    obs = pd.DataFrame({"date": [pd.Timestamp("2020-01-08")], "lat": [33.0 - 30 / 111.2], "lon": [-118.0]})
+    assert DataLoader()._bloom_labels(grid, obs).tolist() == [1]
+
+
+def test_bloom_label_ignores_observation_outside_radius_and_window():
+    grid = pd.DataFrame({"grid_lat": [33.0], "grid_lon": [-118.0], "week_start": [pd.Timestamp("2020-01-06")]})
+    obs = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2020-01-08"), pd.Timestamp("2020-02-20")],
+            "lat": [34.0, 33.0],  # ~111 km away / right place but 45 days later
+            "lon": [-118.0, -118.0],
+        }
+    )
+    assert DataLoader()._bloom_labels(grid, obs).tolist() == [0]
