@@ -49,6 +49,8 @@ The Streamlit dashboard shows all 12 monitored California coastal zones. Clickin
 | Conformal coverage | 90% guaranteed |
 | Top SHAP driver | NO₃ (Nitrate) |
 
+> These figures were produced before the bloom-label cell-center and calendar-week lag fixes (Nov 2026). Re-run `src/model.py` and `src/conformal.py` on the full data to refresh them.
+
 ---
 
 ## Datasets
@@ -116,6 +118,18 @@ python src/explainer.py         # generate SHAP plots
 python src/wandb_log.py         # log to W&B
 streamlit run app/main.py       # launch dashboard
 ```
+
+### Tests
+
+The test suite uses small synthetic frames, so it needs no downloaded data:
+
+```bash
+pip install -r requirements-dev.txt
+ruff check src tests
+pytest
+```
+
+CI runs the same commands on every push and pull request.
 
 ---
 

@@ -62,8 +62,23 @@ def grid_half_degree(lat: pd.Series, lon: pd.Series) -> tuple[pd.Series, pd.Seri
 
 
 def grid_center_lat_lon(grid_lat: float, grid_lon: float) -> tuple[float, float]:
-    """Center of the 0.5° cell for distance checks."""
-    return grid_lat + 0.25, grid_lon + 0.25
+    """Center of the 0.5° cell for distance checks.
+
+    :func:`grid_half_degree` rounds to the *nearest* 0.5°, so the grid value is already the
+    cell center (cell 33.0 spans [32.75, 33.25)). Adding a quarter degree here would shift
+    every distance check ~28 km north and ~23 km east of the cell.
+    """
+    return float(grid_lat), float(grid_lon)
+
+
+def _weekly_lag(df: pd.DataFrame, col: str, weeks: int) -> pd.Series:
+    """Value of ``col`` in the same grid cell exactly ``weeks`` weeks earlier (NaN if that week is absent)."""
+    keys = ["grid_lat", "grid_lon", "week_start"]
+    past = df.groupby(keys, as_index=False)[col].mean()
+    past["week_start"] = past["week_start"] + pd.Timedelta(weeks=weeks)
+    past = past.rename(columns={col: "_lag"})
+    merged = df[keys].merge(past, on=keys, how="left")
+    return pd.Series(merged["_lag"].to_numpy(), index=df.index)
 
 
 class DataLoader:
@@ -398,12 +413,15 @@ class DataLoader:
         else:
             out["nitrate_anomaly"] = np.nan
 
-        # Weekly bins ≈ 7-day steps: lag 1 week ≈ 7d, lag 2 weeks ≈ 14d
+        # Lags are looked up by calendar week, not by row position. Cruise data is sparse
+        # (often months between visits to a cell), so shift(1) would silently return a
+        # value from a much older week under a "lag7" name. Missing weeks stay NaN and are
+        # median-imputed downstream like any other gap.
         if "chlorophyll" in out.columns:
-            out["chlorophyll_lag7"] = out.groupby(["grid_lat", "grid_lon"])["chlorophyll"].shift(1)
+            out["chlorophyll_lag7"] = _weekly_lag(out, "chlorophyll", weeks=1)
         if "nitrate" in out.columns:
-            out["nitrate_lag7"] = out.groupby(["grid_lat", "grid_lon"])["nitrate"].shift(1)
-            out["nitrate_lag14"] = out.groupby(["grid_lat", "grid_lon"])["nitrate"].shift(2)
+            out["nitrate_lag7"] = _weekly_lag(out, "nitrate", weeks=1)
+            out["nitrate_lag14"] = _weekly_lag(out, "nitrate", weeks=2)
 
         if "upwelling_proxy" not in out.columns:
             out["upwelling_proxy"] = np.nan
@@ -611,8 +629,7 @@ def find_habmap_corroboration(
     if len(blooms) == 0:
         return blooms
 
-    clat = zone_lat + 0.25
-    clon = zone_lon + 0.25
+    clat, clon = grid_center_lat_lon(zone_lat, zone_lon)
     dist = haversine_km(blooms["lat"].to_numpy(), blooms["lon"].to_numpy(), clat, clon)
     mask = dist <= radius_km
     blooms = blooms[mask].copy()

@@ -75,11 +75,16 @@ def build_chronos_sequences(
     df: pd.DataFrame,
     lookback_days: int = 30,
     horizon_days: tuple[int, int] = (7, 14),
-) -> tuple[np.ndarray, np.ndarray]:
+    return_weeks: bool = False,
+) -> tuple[np.ndarray, ...]:
     """
     Build per-grid weekly sequences for Chronos-style experiments.
     Input sequence uses [nitrate, chlorophyll, sst_anomaly] over lookback_days.
     Targets are bloom_label at +7 and +14 days (approximated as +1 and +2 weekly steps).
+
+    Windows are emitted grid by grid, so their order is *not* chronological. Pass
+    ``return_weeks=True`` to also get each window's anchor week (its last input step)
+    for time-based splitting.
     """
     seq_cols = [c for c in ["nitrate", "chlorophyll", "sst_anomaly"] if c in df.columns]
     if len(seq_cols) < 3:
@@ -92,7 +97,7 @@ def build_chronos_sequences(
     d[seq_cols] = d[seq_cols].astype(float)
     d[seq_cols] = d.groupby(["grid_lat", "grid_lon"])[seq_cols].transform(lambda s: s.ffill().bfill())
 
-    X, y = [], []
+    X, y, anchor_weeks = [], [], []
     for _, g in d.groupby(["grid_lat", "grid_lon"]):
         g = g.reset_index(drop=True)
         arr = g[seq_cols].to_numpy()
@@ -105,10 +110,14 @@ def build_chronos_sequences(
             targets = [lbl[i + hs] for hs in h_steps]
             X.append(win)
             y.append(targets)
+            anchor_weeks.append(g["week_start"].iloc[i])
 
     if not X:
         raise ValueError("No valid sequence windows produced for Chronos.")
-    return np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32)
+    X_arr, y_arr = np.asarray(X, dtype=np.float32), np.asarray(y, dtype=np.float32)
+    if return_weeks:
+        return X_arr, y_arr, pd.to_datetime(pd.Series(anchor_weeks)).to_numpy()
+    return X_arr, y_arr
 
 
 def train_chronos_hybrid(
@@ -116,6 +125,7 @@ def train_chronos_hybrid(
     test_ratio: float = 0.2,
     random_state: int = 42,
     use_wandb: Optional[bool] = None,
+    check_checkpoint: bool = True,
 ) -> dict[str, Any]:
     """
     Hackathon-friendly Step 3:
@@ -123,12 +133,23 @@ def train_chronos_hybrid(
     2) Try loading Chronos checkpoint (zero-shot readiness check)
     3) Flatten sequence features and train a fast classifier as hybrid baseline
     """
-    X_seq_all, y_seq_all = build_chronos_sequences(df)
-    cut = max(1, int(len(X_seq_all) * (1.0 - test_ratio)))
-    X_seq_train, X_seq_test = X_seq_all[:cut], X_seq_all[cut:]
-    y_seq_train, y_seq_test = y_seq_all[:cut], y_seq_all[cut:]
-    if len(X_seq_test) == 0:
-        raise ValueError("Chronos hybrid split produced empty test window set.")
+    X_seq_all, y_seq_all, anchor = build_chronos_sequences(df, return_weeks=True)
+    # Split on anchor week, not array position: windows are ordered grid by grid, so a
+    # positional cut would train on the future of early grids and test on the past of
+    # later ones. Targets look ahead max_h steps, so a training window's labels can
+    # still overlap the first test weeks; the embargo below drops those windows.
+    weeks = np.sort(np.unique(anchor))
+    if len(weeks) < 2:
+        raise ValueError("Chronos hybrid split needs windows from at least 2 distinct weeks.")
+    cut_i = min(max(1, int(len(weeks) * (1.0 - test_ratio))), len(weeks) - 1)
+    cut_week = weeks[cut_i]
+    horizon = pd.Timedelta(weeks=2)  # furthest target step of the default (7, 14)-day horizons
+    train_mask = anchor < (cut_week - horizon)
+    test_mask = anchor >= cut_week
+    X_seq_train, X_seq_test = X_seq_all[train_mask], X_seq_all[test_mask]
+    y_seq_train, y_seq_test = y_seq_all[train_mask], y_seq_all[test_mask]
+    if len(X_seq_train) == 0 or len(X_seq_test) == 0:
+        raise ValueError("Chronos hybrid split produced an empty train or test window set.")
 
     # +14d target as primary
     y_train = y_seq_train[:, 1].astype(int)
@@ -152,6 +173,8 @@ def train_chronos_hybrid(
         "backend": f"chronos_hybrid_{backend}",
         "n_train": len(y_train),
         "n_test": len(y_test),
+        "train_last_week": pd.Timestamp(anchor[train_mask].max()),
+        "test_first_week": pd.Timestamp(anchor[test_mask].min()),
         "positive_rate_train": float(y_train.mean()) if len(y_train) else 0.0,
         "positive_rate_test": float(y_test.mean()) if len(y_test) else 0.0,
         "f1_at_0.3": float(f1_score(y_test, y_pred, zero_division=0)),
@@ -164,8 +187,10 @@ def train_chronos_hybrid(
         out["pr_auc"] = float("nan")
 
     chronos_ok = False
-    chronos_err = ""
+    chronos_err = "" if check_checkpoint else "checkpoint check skipped"
     try:
+        if not check_checkpoint:
+            raise RuntimeError(chronos_err)
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
         _ = AutoTokenizer.from_pretrained("amazon/chronos-t5-small")
@@ -212,7 +237,8 @@ def chronological_split_by_week(
     weeks = sorted(d[date_col].unique())
     if len(weeks) < 3:
         raise ValueError("Need at least 3 distinct weeks for a time split.")
-    cut_i = max(1, int(len(weeks) * (1.0 - test_ratio)))
+    # Clamp so a small test_ratio still leaves at least one test week (no IndexError).
+    cut_i = min(max(1, int(len(weeks) * (1.0 - test_ratio))), len(weeks) - 1)
     cut_week = weeks[cut_i]
     train = d[d[date_col] < cut_week]
     test = d[d[date_col] >= cut_week]
